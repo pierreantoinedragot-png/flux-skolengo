@@ -1,0 +1,44 @@
+```yaml
+name: Mise à jour du flux RSS
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+
+  generate-rss:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v6
+
+      - name: Installer Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Installer requests
+        run: |
+          pip install requests
+
+      - name: Générer le RSS
+        run: |
+          python generate_rss.py
+
+      - name: Publier rss.xml
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "Mise à jour automatique du flux RSS"
+          file_pattern: rss.xml
+```
