@@ -1,6 +1,7 @@
-name: Mise à jour du flux RSS
+name: Génération du flux RSS Skolengo
 
 on:
+
   schedule:
     - cron: "*/15 * * * *"
 
@@ -13,7 +14,7 @@ permissions:
 
 jobs:
 
-  generate-rss:
+  build:
 
     runs-on: ubuntu-latest
 
@@ -31,12 +32,22 @@ jobs:
         run: |
           pip install requests
 
-      - name: Générer le RSS
+      - name: Générer le flux RSS
         run: |
           python generate_rss.py
 
-      - name: Publier rss.xml
-        uses: stefanzweifel/git-auto-commit-action@v7
+      - name: Configurer GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Préparer le site
+        uses: actions/upload-pages-artifact@v4
         with:
-          commit_message: "Mise à jour automatique du flux RSS"
-          file_pattern: rss.xml
+          path: "."
+
+      - name: Publier sur GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
