@@ -1,4 +1,3 @@
-```python
 import requests
 import html
 import re
@@ -237,4 +236,3 @@ with open(
 print(
     f"Flux RSS généré avec {len(articles)} articles."
 )
-```
