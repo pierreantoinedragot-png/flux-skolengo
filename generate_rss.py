@@ -1,13 +1,9 @@
 import requests
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import format_datetime
 from xml.etree.ElementTree import Element, SubElement, tostring
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
 
 WORDPRESS_API = (
     "https://col58-genevoix.sd.ac-dijon.fr/"
@@ -15,12 +11,7 @@ WORDPRESS_API = (
 )
 
 SITE_URL = "https://col58-genevoix.sd.ac-dijon.fr"
-
 NOMBRE_ARTICLES = 20
-
-# ============================================================
-# RÉCUPÉRATION DES ARTICLES
-# ============================================================
 
 params = {
     "per_page": NOMBRE_ARTICLES,
@@ -36,38 +27,51 @@ response = requests.get(
 )
 
 response.raise_for_status()
-
 articles = response.json()
 
-# ============================================================
-# NETTOYAGE DU TEXTE
-# ============================================================
 
 def clean_text(text):
-
     if not text:
         return ""
 
-    # Suppression des balises HTML
     text = re.sub(r"<[^>]+>", " ", text)
-
-    # Décodage des entités HTML
     text = html.unescape(text)
-
-    # Nettoyage des espaces
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
 
 
-# ============================================================
-# CRÉATION DU RSS
-# ============================================================
+def first_image(content):
+    """
+    Récupère l'URL de la première image de l'article.
+    """
+
+    if not content:
+        return None
+
+    match = re.search(
+        r'<img[^>]+src=["\']([^"\']+)["\']',
+        content,
+        re.IGNORECASE
+    )
+
+    if match:
+        url = html.unescape(match.group(1))
+
+        # On force HTTPS si WordPress fournit encore HTTP
+        if url.startswith("http://"):
+            url = "https://" + url[7:]
+
+        return url
+
+    return None
+
 
 rss = Element(
     "rss",
     {
-        "version": "2.0"
+        "version": "2.0",
+        "xmlns:media": "http://search.yahoo.com/mrss/"
     }
 )
 
@@ -87,8 +91,7 @@ SubElement(
     channel,
     "description"
 ).text = (
-    "Les dernières actualités du collège "
-    "Maurice Genevoix de Decize."
+    "Les dernières actualités du collège Maurice Genevoix de Decize."
 )
 
 SubElement(
@@ -102,10 +105,6 @@ SubElement(
 ).text = "Flux RSS personnalisé Skolengo"
 
 
-# ============================================================
-# ARTICLES
-# ============================================================
-
 for article in articles:
 
     if article.get("status") != "publish":
@@ -113,112 +112,72 @@ for article in articles:
 
     item = SubElement(channel, "item")
 
-    # --------------------------------------------------------
-    # TITRE
-    # --------------------------------------------------------
-
     title = clean_text(
         article.get("title", {}).get("rendered", "")
     )
 
-    SubElement(
-        item,
-        "title"
-    ).text = title
-
-    # --------------------------------------------------------
-    # URL
-    # --------------------------------------------------------
+    SubElement(item, "title").text = title
 
     url = article.get("link", SITE_URL)
 
-    SubElement(
-        item,
-        "link"
-    ).text = url
-
-    # --------------------------------------------------------
-    # GUID
-    # --------------------------------------------------------
-
-    post_id = article.get("id")
+    SubElement(item, "link").text = url
 
     SubElement(
         item,
         "guid",
-        {
-            "isPermaLink": "true"
-        }
+        {"isPermaLink": "true"}
     ).text = url
-
-    # --------------------------------------------------------
-    # DATE
-    # --------------------------------------------------------
 
     date_string = article.get("date_gmt")
 
     if date_string:
 
-        date_string = date_string.replace(
-            "Z",
-            "+00:00"
+        date = datetime.fromisoformat(
+            date_string.replace("Z", "+00:00")
         )
 
-        date = datetime.fromisoformat(
-            date_string
-        )
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=timezone.utc)
 
         SubElement(
             item,
             "pubDate"
         ).text = format_datetime(date)
 
-    # --------------------------------------------------------
-    # DESCRIPTION
-    # --------------------------------------------------------
-
     description = clean_text(
-        article.get(
-            "excerpt",
-            {}
-        ).get(
-            "rendered",
-            ""
-        )
+        article.get("excerpt", {}).get("rendered", "")
     )
 
-    # Si l'extrait est vide, prendre le début du contenu
-
     if not description:
-
         description = clean_text(
-            article.get(
-                "content",
-                {}
-            ).get(
-                "rendered",
-                ""
-            )
+            article.get("content", {}).get("rendered", "")
         )
-
-    # Limitation du résumé
 
     if len(description) > 500:
-
-        description = (
-            description[:500].rstrip()
-            + "…"
-        )
+        description = description[:500].rstrip() + "…"
 
     SubElement(
         item,
         "description"
     ).text = description
 
+    # Première image de l'article
+    image_url = first_image(
+        article.get("content", {}).get("rendered", "")
+    )
 
-# ============================================================
-# ÉCRITURE DU FICHIER RSS
-# ============================================================
+    if image_url:
+
+        SubElement(
+            item,
+            "media:content",
+            {
+                "url": image_url,
+                "medium": "image",
+                "type": "image/jpeg"
+            }
+        )
+
 
 xml = tostring(
     rss,
@@ -226,11 +185,7 @@ xml = tostring(
     xml_declaration=True
 )
 
-with open(
-    "rss.xml",
-    "wb"
-) as file:
-
+with open("rss.xml", "wb") as file:
     file.write(xml)
 
 print(
