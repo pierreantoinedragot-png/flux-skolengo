@@ -13,21 +13,20 @@ WORDPRESS_API = (
 SITE_URL = "https://col58-genevoix.sd.ac-dijon.fr"
 NOMBRE_ARTICLES = 20
 
-params = {
-    "per_page": NOMBRE_ARTICLES,
-    "orderby": "date",
-    "order": "desc",
-    "status": "publish"
-}
 
-response = requests.get(
-    WORDPRESS_API,
-    params=params,
-    timeout=20
-)
+def normalize_url(url):
+    if not url:
+        return None
 
-response.raise_for_status()
-articles = response.json()
+    url = html.unescape(url).strip()
+
+    if url.startswith("//"):
+        url = "https:" + url
+
+    elif url.startswith("http://"):
+        url = "https://" + url[7:]
+
+    return url
 
 
 def clean_text(text):
@@ -41,14 +40,40 @@ def clean_text(text):
     return text.strip()
 
 
-def first_image(content):
+def image_type_from_url(url):
     """
-    Récupère l'URL de la première image de l'article.
+    Détermine le type MIME de l'image à partir de son URL.
+    """
+
+    url = url.lower().split("?")[0]
+
+    if url.endswith(".png"):
+        return "image/png"
+
+    if url.endswith(".webp"):
+        return "image/webp"
+
+    if url.endswith(".gif"):
+        return "image/gif"
+
+    if url.endswith(".avif"):
+        return "image/avif"
+
+    if url.endswith(".svg"):
+        return "image/svg+xml"
+
+    return "image/jpeg"
+
+
+def first_image_from_content(content):
+    """
+    Cherche une image dans le HTML du contenu.
     """
 
     if not content:
         return None
 
+    # 1. src="..."
     match = re.search(
         r'<img[^>]+src=["\']([^"\']+)["\']',
         content,
@@ -56,16 +81,134 @@ def first_image(content):
     )
 
     if match:
-        url = html.unescape(match.group(1))
+        return normalize_url(match.group(1))
 
-        # On force HTTPS si WordPress fournit encore HTTP
-        if url.startswith("http://"):
-            url = "https://" + url[7:]
+    # 2. data-src="..."
+    match = re.search(
+        r'<img[^>]+data-src=["\']([^"\']+)["\']',
+        content,
+        re.IGNORECASE
+    )
 
-        return url
+    if match:
+        return normalize_url(match.group(1))
+
+    # 3. srcset="..."
+    match = re.search(
+        r'<img[^>]+srcset=["\']([^"\']+)["\']',
+        content,
+        re.IGNORECASE
+    )
+
+    if match:
+        srcset = match.group(1)
+
+        # On prend la première URL du srcset
+        first = srcset.split(",")[0].strip()
+        url = first.split(" ")[0]
+
+        return normalize_url(url)
 
     return None
 
+
+def get_article_image(article):
+    """
+    Cherche l'image de l'article.
+
+    Priorité :
+    1. image à la une WordPress
+    2. première image du contenu
+    """
+
+    embedded = article.get("_embedded", {})
+
+    featured = embedded.get(
+        "wp:featuredmedia",
+        []
+    )
+
+    # -----------------------------------------------------
+    # 1. IMAGE À LA UNE
+    # -----------------------------------------------------
+
+    if featured:
+
+        media = featured[0]
+
+        source_url = media.get(
+            "source_url"
+        )
+
+        if source_url:
+
+            url = normalize_url(
+                source_url
+            )
+
+            mime_type = media.get(
+                "mime_type"
+            )
+
+            if not mime_type:
+                mime_type = image_type_from_url(
+                    url
+                )
+
+            return url, mime_type
+
+    # -----------------------------------------------------
+    # 2. PREMIÈRE IMAGE DU CONTENU
+    # -----------------------------------------------------
+
+    content = article.get(
+        "content",
+        {}
+    ).get(
+        "rendered",
+        ""
+    )
+
+    url = first_image_from_content(
+        content
+    )
+
+    if url:
+
+        return (
+            url,
+            image_type_from_url(url)
+        )
+
+    return None, None
+
+
+# =========================================================
+# RÉCUPÉRATION WORDPRESS
+# =========================================================
+
+params = {
+    "per_page": NOMBRE_ARTICLES,
+    "orderby": "date",
+    "order": "desc",
+    "status": "publish",
+    "_embed": "wp:featuredmedia"
+}
+
+response = requests.get(
+    WORDPRESS_API,
+    params=params,
+    timeout=30
+)
+
+response.raise_for_status()
+
+articles = response.json()
+
+
+# =========================================================
+# CRÉATION DU RSS
+# =========================================================
 
 rss = Element(
     "rss",
@@ -75,7 +218,10 @@ rss = Element(
     }
 )
 
-channel = SubElement(rss, "channel")
+channel = SubElement(
+    rss,
+    "channel"
+)
 
 SubElement(
     channel,
@@ -105,65 +251,142 @@ SubElement(
 ).text = "Flux RSS personnalisé Skolengo"
 
 
+nombre_articles = 0
+nombre_images = 0
+
+
+# =========================================================
+# ARTICLES
+# =========================================================
+
 for article in articles:
 
     if article.get("status") != "publish":
         continue
 
-    item = SubElement(channel, "item")
+    nombre_articles += 1
 
-    title = clean_text(
-        article.get("title", {}).get("rendered", "")
+    item = SubElement(
+        channel,
+        "item"
     )
 
-    SubElement(item, "title").text = title
+    # -----------------------------------------------------
+    # TITRE
+    # -----------------------------------------------------
 
-    url = article.get("link", SITE_URL)
+    title = clean_text(
+        article.get(
+            "title",
+            {}
+        ).get(
+            "rendered",
+            ""
+        )
+    )
 
-    SubElement(item, "link").text = url
+    SubElement(
+        item,
+        "title"
+    ).text = title
+
+    # -----------------------------------------------------
+    # URL
+    # -----------------------------------------------------
+
+    url = article.get(
+        "link",
+        SITE_URL
+    )
+
+    SubElement(
+        item,
+        "link"
+    ).text = url
+
+    # -----------------------------------------------------
+    # GUID
+    # -----------------------------------------------------
 
     SubElement(
         item,
         "guid",
-        {"isPermaLink": "true"}
+        {
+            "isPermaLink": "true"
+        }
     ).text = url
 
-    date_string = article.get("date_gmt")
+    # -----------------------------------------------------
+    # DATE
+    # -----------------------------------------------------
+
+    date_string = article.get(
+        "date_gmt"
+    )
 
     if date_string:
 
         date = datetime.fromisoformat(
-            date_string.replace("Z", "+00:00")
+            date_string.replace(
+                "Z",
+                "+00:00"
+            )
         )
 
         if date.tzinfo is None:
-            date = date.replace(tzinfo=timezone.utc)
+            date = date.replace(
+                tzinfo=timezone.utc
+            )
 
         SubElement(
             item,
             "pubDate"
         ).text = format_datetime(date)
 
+    # -----------------------------------------------------
+    # DESCRIPTION
+    # -----------------------------------------------------
+
     description = clean_text(
-        article.get("excerpt", {}).get("rendered", "")
+        article.get(
+            "excerpt",
+            {}
+        ).get(
+            "rendered",
+            ""
+        )
     )
 
     if not description:
+
         description = clean_text(
-            article.get("content", {}).get("rendered", "")
+            article.get(
+                "content",
+                {}
+            ).get(
+                "rendered",
+                ""
+            )
         )
 
     if len(description) > 500:
-        description = description[:500].rstrip() + "…"
+
+        description = (
+            description[:500].rstrip()
+            + "…"
+        )
 
     SubElement(
         item,
         "description"
     ).text = description
 
-    # Première image de l'article
-    image_url = first_image(
-        article.get("content", {}).get("rendered", "")
+    # -----------------------------------------------------
+    # IMAGE
+    # -----------------------------------------------------
+
+    image_url, image_type = get_article_image(
+        article
     )
 
     if image_url:
@@ -174,10 +397,26 @@ for article in articles:
             {
                 "url": image_url,
                 "medium": "image",
-                "type": "image/jpeg"
+                "type": image_type
             }
         )
 
+        nombre_images += 1
+
+        print(
+            f"IMAGE : {title} -> {image_url}"
+        )
+
+    else:
+
+        print(
+            f"PAS D'IMAGE : {title}"
+        )
+
+
+# =========================================================
+# ÉCRITURE
+# =========================================================
 
 xml = tostring(
     rss,
@@ -185,9 +424,19 @@ xml = tostring(
     xml_declaration=True
 )
 
-with open("rss.xml", "wb") as file:
+with open(
+    "rss.xml",
+    "wb"
+) as file:
+
     file.write(xml)
 
+
+print("")
 print(
-    f"Flux RSS généré avec {len(articles)} articles."
+    f"Articles : {nombre_articles}"
+)
+
+print(
+    f"Images trouvées : {nombre_images}/{nombre_articles}"
 )
