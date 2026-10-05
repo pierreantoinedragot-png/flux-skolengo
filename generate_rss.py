@@ -2,7 +2,7 @@ import re
 import html
 import requests
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import format_datetime
 from urllib.parse import urljoin
 
@@ -11,27 +11,30 @@ from urllib.parse import urljoin
 # CONFIGURATION
 # ============================================================
 
-WORDPRESS_API = "https://col58-genevoix.sd.ac-dijon.fr/wp-json/wp/v2/posts"
+WORDPRESS_API = (
+    "https://col58-genevoix.sd.ac-dijon.fr/"
+    "wp-json/wp/v2/posts"
+)
 
-SITE_URL = "https://col58-genevoix.sd-ac-dijon.fr"
+SITE_URL = "https://col58-genevoix.sd.ac-dijon.fr"
 
 RSS_TITLE = "Actualités du collège Maurice Genevoix"
-RSS_DESCRIPTION = "Les dernières actualités du collège Maurice Genevoix de Decize."
+
+RSS_DESCRIPTION = (
+    "Les dernières actualités du collège Maurice Genevoix de Decize."
+)
 
 OUTPUT_FILE = "rss.xml"
 
-# Nombre maximum d'articles récupérés
 PER_PAGE = 100
 
-# Namespace Media RSS
 MEDIA_NS = "http://search.yahoo.com/mrss/"
 
-# Namespace Content
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
 
 
 # ============================================================
-# NAMESPACES XML
+# NAMESPACES
 # ============================================================
 
 ET.register_namespace("media", MEDIA_NS)
@@ -54,9 +57,7 @@ session.headers.update({
 # ============================================================
 
 def normalize_url(url):
-    """
-    Transforme les URL HTTP en HTTPS et rend les URL absolues.
-    """
+
     if not url:
         return None
 
@@ -75,9 +76,7 @@ def normalize_url(url):
 
 
 def guess_mime_type(url):
-    """
-    Détermine le type MIME d'une image à partir de son extension.
-    """
+
     if not url:
         return "image/jpeg"
 
@@ -102,58 +101,61 @@ def guess_mime_type(url):
 
 
 def clean_html(text):
-    """
-    Transforme un contenu HTML en texte simple.
-    """
+
     if not text:
         return ""
 
-    text = re.sub(r"<script\b[^>]*>.*?</script>", "", text,
-                  flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r"<script\b[^>]*>.*?</script>",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL
+    )
 
-    text = re.sub(r"<style\b[^>]*>.*?</style>", "", text,
-                  flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r"<style\b[^>]*>.*?</style>",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL
+    )
 
-    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(
+        r"<[^>]+>",
+        " ",
+        text
+    )
 
     text = html.unescape(text)
 
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
 
     return text.strip()
 
 
 def truncate(text, max_length=500):
-    """
-    Coupe proprement une description.
-    """
+
     if not text:
         return ""
 
     if len(text) <= max_length:
         return text
 
-    return text[:max_length].rsplit(" ", 1)[0] + "…"
+    return text[:max_length].rsplit(
+        " ",
+        1
+    )[0] + "…"
 
 
 def extract_image_from_html(content):
-    """
-    Cherche la première image dans le contenu WordPress.
-
-    Priorité :
-    1. src
-    2. data-src
-    3. data-lazy-src
-    4. srcset
-    """
 
     if not content:
         return None
 
-    # --------------------------------------------------------
     # src
-    # --------------------------------------------------------
-
     match = re.search(
         r'<img[^>]+src=["\']([^"\']+)["\']',
         content,
@@ -161,12 +163,11 @@ def extract_image_from_html(content):
     )
 
     if match:
-        return normalize_url(match.group(1))
+        return normalize_url(
+            match.group(1)
+        )
 
-    # --------------------------------------------------------
     # data-src
-    # --------------------------------------------------------
-
     match = re.search(
         r'<img[^>]+data-src=["\']([^"\']+)["\']',
         content,
@@ -174,12 +175,11 @@ def extract_image_from_html(content):
     )
 
     if match:
-        return normalize_url(match.group(1))
+        return normalize_url(
+            match.group(1)
+        )
 
-    # --------------------------------------------------------
     # data-lazy-src
-    # --------------------------------------------------------
-
     match = re.search(
         r'<img[^>]+data-lazy-src=["\']([^"\']+)["\']',
         content,
@@ -187,12 +187,11 @@ def extract_image_from_html(content):
     )
 
     if match:
-        return normalize_url(match.group(1))
+        return normalize_url(
+            match.group(1)
+        )
 
-    # --------------------------------------------------------
     # srcset
-    # --------------------------------------------------------
-
     match = re.search(
         r'<img[^>]+srcset=["\']([^"\']+)["\']',
         content,
@@ -200,158 +199,174 @@ def extract_image_from_html(content):
     )
 
     if match:
+
         srcset = match.group(1)
 
         first_image = srcset.split(",")[0].strip()
 
         if first_image:
+
             url = first_image.split()[0]
+
             return normalize_url(url)
 
     return None
 
 
 def get_featured_image(post):
-    """
-    Cherche l'image mise en avant via l'API REST WordPress.
-    """
 
-    embedded = post.get("_embedded", {})
+    embedded = post.get(
+        "_embedded",
+        {}
+    )
 
-    media_items = embedded.get("wp:featuredmedia", [])
+    media_items = embedded.get(
+        "wp:featuredmedia",
+        []
+    )
 
     if media_items:
 
         media = media_items[0]
 
-        source_url = media.get("source_url")
+        source_url = media.get(
+            "source_url"
+        )
 
         if source_url:
-            return normalize_url(source_url)
+
+            return normalize_url(
+                source_url
+            )
 
     return None
 
 
 def get_post_image(post):
-    """
-    Cherche l'image de l'article.
 
-    Priorité :
-    1. image mise en avant WordPress
-    2. première image du contenu
-    """
-
+    # 1. Image à la une
     image = get_featured_image(post)
 
     if image:
         return image
 
-    content = post.get("content", {}).get("rendered", "")
+    # 2. Première image du contenu
+    content = post.get(
+        "content",
+        {}
+    ).get(
+        "rendered",
+        ""
+    )
 
-    return extract_image_from_html(content)
+    return extract_image_from_html(
+        content
+    )
 
 
 def parse_date(date_string):
-    """
-    Convertit la date WordPress en datetime UTC.
-    """
 
     if not date_string:
-        return datetime.utcnow()
+        return datetime.now(
+            timezone.utc
+        )
 
     try:
-        # Exemple :
-        # 2026-10-02T18:05:02
-        dt = datetime.fromisoformat(date_string.replace("Z", "+00:00"))
 
-        # Si WordPress ne fournit pas de fuseau,
-        # on considère la date comme UTC.
+        dt = datetime.fromisoformat(
+            date_string.replace(
+                "Z",
+                "+00:00"
+            )
+        )
+
         if dt.tzinfo is None:
-            from datetime import timezone
-            dt = dt.replace(tzinfo=timezone.utc)
+
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
 
         return dt
 
     except Exception:
-        return datetime.utcnow()
+
+        return datetime.now(
+            timezone.utc
+        )
 
 
 # ============================================================
-# RÉCUPÉRATION DES ARTICLES WORDPRESS
+# WORDPRESS
 # ============================================================
+
+print(
+    "Récupération des articles WordPress..."
+)
 
 params = {
     "per_page": PER_PAGE,
     "page": 1,
     "orderby": "date",
     "order": "desc",
+    "status": "publish",
     "_embed": "wp:featuredmedia"
 }
 
-print("Récupération des articles WordPress...")
+response = session.get(
+    WORDPRESS_API,
+    params=params,
+    timeout=30
+)
 
-try:
+response.raise_for_status()
 
-    response = session.get(
-        WORDPRESS_API,
-        params=params,
-        timeout=30
-    )
+posts = response.json()
 
-    response.raise_for_status()
-
-    posts = response.json()
-
-except Exception as error:
-
-    print("ERREUR lors de la récupération WordPress :")
-    print(error)
-
-    raise
-
-
-print(f"Articles récupérés : {len(posts)}")
+print(
+    f"Articles récupérés : {len(posts)}"
+)
 
 
 # ============================================================
-# CRÉATION DU RSS
+# RSS
 # ============================================================
 
 rss = ET.Element(
     "rss",
     {
-        "version": "2.0",
-        "xmlns:media": MEDIA_NS,
-        "xmlns:content": CONTENT_NS
+        "version": "2.0"
     }
 )
 
-channel = ET.SubElement(rss, "channel")
+channel = ET.SubElement(
+    rss,
+    "channel"
+)
 
-
-# ------------------------------------------------------------
-# INFORMATIONS DU FLUX
-# ------------------------------------------------------------
 
 ET.SubElement(
     channel,
     "title"
 ).text = RSS_TITLE
 
+
 ET.SubElement(
     channel,
     "link"
 ).text = SITE_URL
+
 
 ET.SubElement(
     channel,
     "description"
 ).text = RSS_DESCRIPTION
 
+
 ET.SubElement(
     channel,
     "language"
 ).text = "fr-FR"
+
 
 ET.SubElement(
     channel,
@@ -368,36 +383,56 @@ images_found = 0
 for post in posts:
 
     title = clean_html(
-        post.get("title", {}).get("rendered", "")
+        post.get(
+            "title",
+            {}
+        ).get(
+            "rendered",
+            ""
+        )
     )
 
     link = normalize_url(
-        post.get("link", "")
+        post.get(
+            "link",
+            ""
+        )
     )
 
-    post_content = post.get(
-        "content", {}
+    content = post.get(
+        "content",
+        {}
     ).get(
         "rendered",
         ""
     )
 
     description = truncate(
-        clean_html(post_content),
+        clean_html(content),
         500
     )
 
-    date_string = post.get("date_gmt") or post.get("date")
+    date_string = (
+        post.get("date_gmt")
+        or post.get("date")
+    )
 
-    publication_date = parse_date(date_string)
+    publication_date = parse_date(
+        date_string
+    )
 
-    image_url = get_post_image(post)
+    image_url = get_post_image(
+        post
+    )
 
     # --------------------------------------------------------
     # ITEM
     # --------------------------------------------------------
 
-    item = ET.SubElement(channel, "item")
+    item = ET.SubElement(
+        channel,
+        "item"
+    )
 
     ET.SubElement(
         item,
@@ -409,25 +444,26 @@ for post in posts:
         "link"
     ).text = link
 
-    guid = ET.SubElement(
+    ET.SubElement(
         item,
         "guid",
-        {"isPermaLink": "true"}
-    )
+        {
+            "isPermaLink": "true"
+        }
+    ).text = link
 
-    guid.text = link
-
-    pub_date = ET.SubElement(
+    ET.SubElement(
         item,
         "pubDate"
+    ).text = format_datetime(
+        publication_date
     )
-
-    pub_date.text = format_datetime(publication_date)
 
     ET.SubElement(
         item,
         "description"
     ).text = description
+
 
     # --------------------------------------------------------
     # IMAGE
@@ -437,14 +473,16 @@ for post in posts:
 
         images_found += 1
 
-        mime_type = guess_mime_type(image_url)
+        mime_type = guess_mime_type(
+            image_url
+        )
 
         print(
             f"IMAGE : {title} -> {image_url}"
         )
 
         # Media RSS
-        media_content = ET.SubElement(
+        ET.SubElement(
             item,
             f"{{{MEDIA_NS}}}content",
             {
@@ -454,7 +492,7 @@ for post in posts:
             }
         )
 
-        # Media RSS thumbnail
+        # Thumbnail
         ET.SubElement(
             item,
             f"{{{MEDIA_NS}}}thumbnail",
@@ -463,22 +501,27 @@ for post in posts:
             }
         )
 
-        # ----------------------------------------------------
-        # IMAGE ÉGALEMENT DANS content:encoded
-        #
-        # Cela améliore la compatibilité avec certains lecteurs
-        # RSS qui ne prennent pas en charge Media RSS.
-        # ----------------------------------------------------
-
-        content_encoded = ET.SubElement(
+        # Content RSS
+        encoded = ET.SubElement(
             item,
             f"{{{CONTENT_NS}}}encoded"
         )
 
-        content_encoded.text = (
-            f'<p>{html.escape(description)}</p>'
-            f'<p><img src="{html.escape(image_url, quote=True)}" '
-            f'alt="{html.escape(title, quote=True)}" /></p>'
+        encoded.text = (
+            "<p>"
+            + html.escape(description)
+            + "</p>"
+            + '<p><img src="'
+            + html.escape(
+                image_url,
+                quote=True
+            )
+            + '" alt="'
+            + html.escape(
+                title,
+                quote=True
+            )
+            + '" /></p>'
         )
 
     else:
@@ -489,12 +532,17 @@ for post in posts:
 
 
 # ============================================================
-# ÉCRITURE DU FICHIER
+# ÉCRITURE
 # ============================================================
 
-tree = ET.ElementTree(rss)
+tree = ET.ElementTree(
+    rss
+)
 
-ET.indent(tree, space="  ")
+ET.indent(
+    tree,
+    space="  "
+)
 
 tree.write(
     OUTPUT_FILE,
@@ -504,14 +552,35 @@ tree.write(
 
 
 # ============================================================
-# RÉSUMÉ
+# RÉSULTAT
 # ============================================================
 
 print()
-print("======================================")
-print("GÉNÉRATION DU FLUX TERMINÉE")
-print("======================================")
-print(f"Articles : {len(posts)}")
-print(f"Images trouvées : {images_found}/{len(posts)}")
-print(f"Fichier : {OUTPUT_FILE}")
-print("======================================")
+print(
+    "======================================"
+)
+
+print(
+    "GÉNÉRATION DU FLUX TERMINÉE"
+)
+
+print(
+    "======================================"
+)
+
+print(
+    f"Articles : {len(posts)}"
+)
+
+print(
+    f"Images trouvées : "
+    f"{images_found}/{len(posts)}"
+)
+
+print(
+    f"Fichier : {OUTPUT_FILE}"
+)
+
+print(
+    "======================================"
+)
